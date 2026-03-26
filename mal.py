@@ -1,50 +1,36 @@
+import os
 import requests
+from dotenv import load_dotenv
 
-# REQUISITO PARA LA API OFICIAL:
-# Debes registrar tu aplicación en https://myanimelist.net/apiconfig
-# para obtener un "Client ID". Reemplaza el texto de abajo con tu Client ID real.
-CLIENT_ID = "TU_CLIENT_ID_AQUI" 
+# Carga las variables de entorno desde un archivo .env (si existe)
+load_dotenv()
+
+# Obtiene el Client ID desde la variable de entorno
+CLIENT_ID = os.getenv("MAL_CLIENT_ID")
 
 def obtener_animes_oficial(letra):
     """
     Busca animes usando la API oficial de MyAnimeList (v2).
     """
     if not CLIENT_ID or CLIENT_ID == "TU_CLIENT_ID_AQUI":
-        print("ERROR: Necesitas configurar tu CLIENT_ID en el código para usar la API Oficial.")
-        print("Puedes obtener uno creando una app en: https://myanimelist.net/apiconfig")
-        return
+        return {"error": "No se ha configurado el MAL_CLIENT_ID en las variables de entorno."}
 
-    # Endpoint oficial de búsqueda de anime
     url = "https://api.myanimelist.net/v2/anime"
-    headers = {
-        "X-MAL-CLIENT-ID": CLIENT_ID
-    }
+    headers = {"X-MAL-CLIENT-ID": CLIENT_ID}
     
-    # MAL requiere que el parámetro de búsqueda 'q' tenga. 
-    # Por defecto, MAL pide al menos 3 caracteres. Si ingresan 1 letra, podríamos obtener un error 400,
-    # pero enviamos la petición de todas formas en caso de que funcione o busquen algo más largo.
     parametros = {
         "q": letra,
-        "limit": 100, # Límite alto para luego filtrar los que sí inicien con la letra
-        "fields": "id,title,mean" 
+        "limit": 100, 
+        "fields": "id,title,mean,main_picture" 
     }
-
-    print(f"\nConsultando a la API Oficial de MyAnimeList...")
 
     try:
         respuesta = requests.get(url, headers=headers, params=parametros)
         
         # Si MAL rechaza la petición por ser muy corta (menos de 3 caracteres)
         if respuesta.status_code == 400:
-            print("\n[!] Error 400 Bad Request: La API oficial de MyAnimeList requiere que la búsqueda tenga por lo menos 3 caracteres.")
-            print(f"Intentaste buscar con: '{letra}'.")
-            
-            # --- WORKAROUND (Alternativa) ---
-            # Ya que la API de búsqueda no permite 1 letra, podemos buscar en el ranking general superior 
-            # (top 500) y filtrar localmente los que inicien con esa letra.
-            print("\nIntentando método alternativo: filtrando los mejores 500 animes...\n")
             url_ranking = "https://api.myanimelist.net/v2/anime/ranking"
-            params_ranking = {"ranking_type": "all", "limit": 500, "fields": "id,title,mean"}
+            params_ranking = {"ranking_type": "tv", "limit": 500, "fields": "id,title,mean,main_picture"}
             respuesta = requests.get(url_ranking, headers=headers, params=params_ranking)
             respuesta.raise_for_status()
             
@@ -54,44 +40,42 @@ def obtener_animes_oficial(letra):
                 if item["node"]["title"].lower().startswith(letra.lower())
             ]
             
-            if not animes_filtrados:
-                 print(f"No se encontraron animes en el Top 500 que inicien con la letra '{letra.upper()}'.")
-                 return
-                 
-            print(f"--- Top resultados (del ranking 500) que inician con '{letra.upper()}' ---")
-            for i, item in enumerate(animes_filtrados, 1):
-                anime = item.get("node", {})
-                titulo = anime.get("title", "Desconocido")
-                score = anime.get("mean", "N/A")
-                print(f"{i}. {titulo} (⭐ {score})")
-            return
+            return _formatear_resultados(animes_filtrados)
             
         respuesta.raise_for_status()
         datos = respuesta.json()
         
         lista_animes = datos.get("data", [])
-        
-        # Filtramos estrictamente los que inician con la letra/texto asignado
         animes_filtrados = [
             item for item in lista_animes
             if item["node"]["title"].lower().startswith(letra.lower())
         ]
         
-        if not animes_filtrados:
-            print(f"No se encontraron animes que inicien exactamente con '{letra.upper()}' en los resultados de búsqueda.")
-            return
-
-        print(f"--- Resultados que inician con '{letra.upper()}' ---")
-        for i, item in enumerate(animes_filtrados, 1):
-            anime = item.get("node", {})
-            titulo = anime.get("title", "Desconocido")
-            score = anime.get("mean", "N/A")
-            print(f"{i}. {titulo} (⭐ {score})")
+        return _formatear_resultados(animes_filtrados)
             
     except requests.exceptions.RequestException as e:
-        print(f"Error al conectarse a la API oficial: {e}")
+        return {"error": f"Error al interactuar con la API: {str(e)}"}
+
+def _formatear_resultados(items):
+    resultados = []
+    for item in items:
+        anime = item.get("node", {})
+        id_anime = anime.get("id", "N/A")
+        
+        imagen = ""
+        if "main_picture" in anime:
+            imagen = anime["main_picture"].get("large", anime["main_picture"].get("medium", ""))
+            
+        resultados.append({
+            "id": id_anime,
+            "title": anime.get("title", "Desconocido"),
+            "score": anime.get("mean", "N/A"),
+            "image": imagen,
+            "url": f"https://myanimelist.net/anime/{id_anime}"
+        })
+    return resultados
 
 if __name__ == "__main__":
     print("--- Buscador de Anime (MAL API v2) ---")
     letra_busqueda = input("Ingresa la letra inicial del anime: ")
-    obtener_animes_oficial(letra_busqueda)
+    print(obtener_animes_oficial(letra_busqueda))
